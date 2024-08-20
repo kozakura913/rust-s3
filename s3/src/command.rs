@@ -53,7 +53,19 @@ impl<'a> Multipart<'a> {
         }
     }
 }
-
+#[derive(Default,Clone, Debug)]
+pub enum ContentMd5{
+    Some(String),
+    None,
+    #[default]
+    Auto,
+}
+impl From<&[u8]> for ContentMd5{
+    fn from(value: &[u8]) -> Self {
+        use base64::Engine;
+        Self::Some(base64::engine::general_purpose::STANDARD.encode(value))
+    }
+}
 #[derive(Clone, Debug)]
 pub enum Command<'a> {
     HeadObject,
@@ -71,8 +83,11 @@ pub enum Command<'a> {
     GetObjectTagging,
     PutObject {
         content: &'a [u8],
+        content_md5: ContentMd5,
         content_type: &'a str,
         multipart: Option<Multipart<'a>>,
+        cache_control: Option<&'a str>,
+        content_disposition: Option<&'a str>,
     },
     PutObjectTagging {
         tags: &'a str,
@@ -115,6 +130,7 @@ pub enum Command<'a> {
     UploadPart {
         part_number: u32,
         content: &'a [u8],
+        content_md5: ContentMd5,
         upload_id: &'a str,
     },
     AbortMultipartUpload {
@@ -123,6 +139,8 @@ pub enum Command<'a> {
     CompleteMultipartUpload {
         upload_id: &'a str,
         data: CompleteMultipartUploadData,
+        cache_control: Option<&'a str>,
+        content_disposition: Option<&'a str>,
     },
     CreateBucket {
         config: BucketConfiguration,

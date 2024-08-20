@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use crate::bucket_ops::{BucketConfiguration, CreateBucketResponse};
-use crate::command::{Command, Multipart};
+use crate::command::{Command, ContentMd5, Multipart};
 use crate::creds::Credentials;
 use crate::region::Region;
 #[cfg(any(feature = "with-tokio", feature = "use-tokio-native-tls"))]
@@ -1263,6 +1263,9 @@ impl Bucket {
             content: &chunk,
             multipart: Some(Multipart::new(part_number, upload_id)), // upload_id: &msg.upload_id,
             content_type,
+            content_md5:Default::default(),
+            cache_control:None,
+            content_disposition:None,
         };
         let request = RequestImpl::new(self, path, command).await?;
         request.response_data(true).await
@@ -1504,6 +1507,9 @@ impl Bucket {
             content: &chunk,
             multipart: Some(Multipart::new(part_number, upload_id)), // upload_id: &msg.upload_id,
             content_type,
+            content_md5:Default::default(),
+            cache_control:None,
+            content_disposition:None,
         };
         let request = RequestImpl::new(self, path, command).await?;
         let response_data = request.response_data(true).await?;
@@ -1569,7 +1575,21 @@ impl Bucket {
         parts: Vec<Part>,
     ) -> Result<ResponseData, S3Error> {
         let data = CompleteMultipartUploadData { parts };
-        let complete = Command::CompleteMultipartUpload { upload_id, data };
+        let complete = Command::CompleteMultipartUpload { upload_id, data ,cache_control:None,content_disposition:None};
+        let complete_request = RequestImpl::new(self, path, complete).await?;
+        complete_request.response_data(false).await
+    }
+    #[maybe_async::async_impl]
+    pub async fn complete_multipart_upload_with_metadata(
+        &self,
+        path: &str,
+        upload_id: &str,
+        parts: Vec<Part>,
+        cache_control: Option<&str>,
+        content_disposition: Option<&str>,
+    ) -> Result<ResponseData, S3Error> {
+        let data = CompleteMultipartUploadData { parts };
+        let complete = Command::CompleteMultipartUpload { upload_id, data ,cache_control,content_disposition};
         let complete_request = RequestImpl::new(self, path, complete).await?;
         complete_request.response_data(false).await
     }
@@ -1772,7 +1792,31 @@ impl Bucket {
         let command = Command::PutObject {
             content,
             content_type,
+            content_md5:Default::default(),
             multipart: None,
+            cache_control:None,
+            content_disposition:None,
+        };
+        let request = RequestImpl::new(self, path.as_ref(), command).await?;
+        request.response_data(true).await
+    }
+    #[maybe_async::maybe_async]
+    pub async fn put_object_with_metadata<S: AsRef<str>>(
+        &self,
+        path: S,
+        content: &[u8],
+        content_type: &str,
+        content_md5: ContentMd5,
+        cache_control: &str,
+        content_disposition: &str,
+    ) -> Result<ResponseData, S3Error> {
+        let command = Command::PutObject {
+            content,
+            content_type,
+            content_md5,
+            multipart: None,
+            cache_control: Some(cache_control),
+            content_disposition: Some(content_disposition),
         };
         let request = RequestImpl::new(self, path.as_ref(), command).await?;
         request.response_data(true).await

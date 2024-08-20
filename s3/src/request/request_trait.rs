@@ -1,6 +1,8 @@
 use base64::engine::general_purpose;
 use base64::Engine;
 use hmac::Mac;
+use http::header::CACHE_CONTROL;
+use http::header::CONTENT_DISPOSITION;
 use quick_xml::se::to_string;
 use std::collections::HashMap;
 #[cfg(any(feature = "with-tokio", feature = "with-async-std"))]
@@ -537,12 +539,39 @@ pub trait Request {
             Command::GetObject => {}
             Command::GetObjectTagging => {}
             Command::GetBucketLocation => {}
-            _ => {
+            cmd => {
                 headers.insert(
                     CONTENT_LENGTH,
                     self.command().content_length()?.to_string().parse()?,
                 );
-                headers.insert(CONTENT_TYPE, self.command().content_type().parse()?);
+                headers.insert(CONTENT_TYPE, cmd.content_type().parse()?);
+                match cmd{
+                    Command::PutObject{
+                        cache_control,
+                        content_disposition,
+                        ..
+                    } => {
+                        if let Some(cache_control)=cache_control{
+                            headers.insert(CACHE_CONTROL, cache_control.parse()?);
+                        }
+                        if let Some(content_disposition)=content_disposition{
+                            headers.insert(CONTENT_DISPOSITION, content_disposition.to_string().parse()?);
+                        }
+                    }
+                    Command::CompleteMultipartUpload{
+                        cache_control,
+                        content_disposition,
+                        ..
+                    } => {
+                        if let Some(cache_control)=cache_control{
+                            headers.insert(CACHE_CONTROL, cache_control.parse()?);
+                        }
+                        if let Some(content_disposition)=content_disposition{
+                            headers.insert(CONTENT_DISPOSITION, content_disposition.to_string().parse()?);
+                        }
+                    }
+                    _=>{}
+                }
             }
         }
         headers.insert(
@@ -565,19 +594,31 @@ pub trait Request {
                 security_token.parse()?,
             );
         }
-
+        fn map_md5(content: &[u8],content_md5:crate::command::ContentMd5)->Option<String>{
+            match content_md5{
+                crate::command::ContentMd5::Some(hash) => {
+                    Some(hash)
+                },
+                crate::command::ContentMd5::Auto => {
+                    let digest = md5::compute(content);
+                    let hash = general_purpose::STANDARD.encode(digest.as_ref());
+                    Some(hash)
+                },
+                crate::command::ContentMd5::None => None,
+            }
+        }
         if let Command::PutObjectTagging { tags } = self.command() {
             let digest = md5::compute(tags);
             let hash = general_purpose::STANDARD.encode(digest.as_ref());
             headers.insert(HeaderName::from_static("content-md5"), hash.parse()?);
-        } else if let Command::PutObject { content, .. } = self.command() {
-            let digest = md5::compute(content);
-            let hash = general_purpose::STANDARD.encode(digest.as_ref());
-            headers.insert(HeaderName::from_static("content-md5"), hash.parse()?);
-        } else if let Command::UploadPart { content, .. } = self.command() {
-            let digest = md5::compute(content);
-            let hash = general_purpose::STANDARD.encode(digest.as_ref());
-            headers.insert(HeaderName::from_static("content-md5"), hash.parse()?);
+        } else if let Command::PutObject { content,content_md5, .. } = self.command() {
+            if let Some(hash)=map_md5(content,content_md5){
+                headers.insert(HeaderName::from_static("content-md5"), hash.parse()?);
+            }
+        } else if let Command::UploadPart { content,content_md5, .. } = self.command() {
+            if let Some(hash)=map_md5(content,content_md5){
+                headers.insert(HeaderName::from_static("content-md5"), hash.parse()?);
+            }
         } else if let Command::GetObject {} = self.command() {
             headers.insert(ACCEPT, "application/octet-stream".to_string().parse()?);
         // headers.insert(header::ACCEPT_CHARSET, HeaderValue::from_str("UTF-8")?);
